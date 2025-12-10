@@ -82,28 +82,6 @@ The automation suite runs on **Windows** (recommended) and **Linux** systems.
 
 ---
 
-## Project Components
-# Graphical interface
-main_gui.py 
-# Sequential queue execution controller
-simulation_manager.py 
-# Pipeline selector and wrapper
-pipelines.py 
-
-# Front wing CFD pipeline
-frontwing_pipeline.py 
-# Rear wing CFD pipeline
-rearwing_pipeline.py 
-# Undertray CFD pipeline
-undertray_pipeline.py 
-# Half-car CFD pipeline
-halfcar_pipeline.py 
-
-# PDF report builder
-report_gen.py 
-
----
-
 ## License
 This project is licensed under the **MIT License**.  
 See `LICENSE` for details.
