@@ -1,51 +1,67 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
-import ansys.units
+from PyInstaller.utils.hooks import collect_all
 
-cfg_yaml = os.path.join(ansys.units.__path__[0], "cfg.yaml")
+# ---------------------------------------------------------
+# Get absolute path of this .spec file correctly
+# PyInstaller does NOT set __file__, so we use cwd
+# ---------------------------------------------------------
+project_dir = os.getcwd()
+
+# ---------------------------------------------------------
+# Collect Pyside6 assets (Qt DLLs, plugins, etc.)
+# ---------------------------------------------------------
+pyside6_binaries, pyside6_datas, pyside6_hidden = collect_all("PySide6")
+
+# ---------------------------------------------------------
+# Bundle ansys.units YAML files
+# ---------------------------------------------------------
+import ansys.units
+units_path = ansys.units.__path__[0]
+
+datas = [
+    (units_path, "ansys/units"),
+] + pyside6_datas
+
+# ---------------------------------------------------------
+# Full hidden imports needed for Fluent + PySide6
+# ---------------------------------------------------------
+hiddenimports = [
+    # ansys units
+    "ansys.units",
+    "ansys.units.quantity",
+    "ansys.units.systems",
+    "ansys.units._constants",
+    "ansys.units.common",
+
+    # Fluent Core
+    "ansys.fluent.core",
+    "ansys.fluent.core.session_solver_lite",
+    "ansys.fluent.core.utils.dump_session_data",
+    "ansys.fluent.core.utils.event_loop",
+    "ansys.fluent.core.utils.test_grpc_connection",
+
+    # Visualization
+    "ansys.fluent.visualization",
+    "ansys.fluent.visualization.contour",
+    "ansys.fluent.visualization.matplotlib",
+    "ansys.fluent.visualization.pyvista",
+] + pyside6_hidden
+
 
 block_cipher = None
 
 a = Analysis(
     ['main_gui.py'],
-    pathex=['.'],
-    binaries=[],
-    datas=[
-        # PyFluent required YAML file
-        (cfg_yaml, 'ansys/units'),
-
-        # Pipeline files (your project does NOT have a pipelines folder)
-        ('frontwing_pipeline.py', '.'),
-        ('rearwing_pipeline.py', '.'),
-        ('undertray_pipeline.py', '.'),
-        ('halfcar_pipeline.py', '.'),
-
-        ('diagnostics.py', '.'),
-        ('simulation_manager.py', '.'),
-        ('worker_thread.py', '.'),
-        ('report_gen.py', '.'),
-    ],
-    hiddenimports=[
-        'PySide6',
-        'PySide6.QtCore',
-        'PySide6.QtGui',
-        'PySide6.QtWidgets',
-        'ansys.fluent.core',
-    ],
+    pathex=[project_dir],
+    binaries=pyside6_binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     excludes=[
-        'PySide6.Qt3DAnimation',
-        'PySide6.Qt3DCore',
-        'PySide6.Qt3DExtras',
-        'PySide6.Qt3DInput',
-        'PySide6.Qt3DLogic',
-        'PySide6.Qt3DRender',
-        'PySide6.QtCharts',
-        'PySide6.QtMultimedia',
-        'PySide6.QtMultimediaWidgets',
-        'PySide6.QtQuick',
-        'PySide6.QtQml',
-        'PySide6.QtSql',
+        "PyQt5",   # Avoid conflicting Qt bindings
+        "PyQt6",
+        "qtpy"
     ],
     noarchive=False,
 )
@@ -56,8 +72,11 @@ exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
-    a.zipfiles,
     a.datas,
-    name='Ram Racing Aero Automation Suite',
+    [],
+    name="Ram Racing Aero Automation Suite",
+    debug=False,
+    strip=False,
+    upx=False,
     console=False,
 )
