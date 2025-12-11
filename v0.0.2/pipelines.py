@@ -1,174 +1,124 @@
-# pipelines.py
-# Ram Racing FSAE Aero Automation Suite
-# Unified wrapper for all CFD pipelines (FW, RW, UT, HC)
+# base_pipeline.py
+# Unified pipeline foundation for Fluent CFD automation using PyFluent
 
 import os
 import traceback
+import ansys.fluent.core as pyfluent
 
-# Import the four actual CFD pipeline implementations
-from frontwing_pipeline import (
-    run_meshing as fw_run_meshing,
-    run_solver as fw_run_solver,
-    export_results as fw_export_results
-)
-
-from rearwing_pipeline import (
-    run_meshing as rw_run_meshing,
-    run_solver as rw_run_solver,
-    export_results as rw_export_results
-)
-
-from undertray_pipeline import (
-    run_meshing as ut_run_meshing,
-    run_solver as ut_run_solver,
-    export_results as ut_export_results
-)
-
-from halfcar_pipeline import (
-    run_meshing as hc_run_meshing,
-    run_solver as hc_run_solver,
-    export_results as hc_export_results
-)
-
-
-
-# ===============================================================
-# BASE PIPELINE CLASS (ABSTRACT)
-# ===============================================================
 
 class BasePipeline:
-    def __init__(self, geom_path, sim_dir, L, W, H):
+    """
+    Base class for all CFD pipelines.
+    Handles logging, progress, Fluent sessions, and common operations.
+    """
+
+    def __init__(self, geom_path, output_dir, sim_name,
+                 L, W, H, logfn, progressfn):
         self.geom_path = geom_path
-        self.sim_dir = sim_dir
+        self.output_dir = output_dir
+        self.sim_name = sim_name
+
         self.L = L
         self.W = W
         self.H = H
 
-        # Ensure output folder exists
-        os.makedirs(sim_dir, exist_ok=True)
+        # Injected from SimulationManager
+        self.log = logfn
+        self.progress = progressfn
 
-    # ---- To be overridden by subclasses ----
-    def run_meshing(self):
-        raise NotImplementedError
+        self.session = None   # Fluent meshing or solver session
+        self.tui = None       # Convenience alias
 
-    def run_solver(self, mesh_path):
-        raise NotImplementedError
+    # ------------------------------------------------------------
+    # SAFE LOGGING
+    # ------------------------------------------------------------
+    def log_info(self, msg):
+        """Thread-safe GUI logging."""
+        self.log(f"[{self.sim_name}] {msg}")
 
-    def export_results(self, results):
-        raise NotImplementedError
-
-    # ---- Unified run() used by the simulation manager ----
-    def run(self):
-        """Full pipeline: mesh → solve → export."""
+    # ------------------------------------------------------------
+    # SESSION LAUNCHING
+    # ------------------------------------------------------------
+    def launch_fluent_meshing(self):
+        self.log_info("Launching Fluent Meshing...")
         try:
-            mesh_path = self.run_meshing()
-            sim_results = self.run_solver(mesh_path)
-            report_path = self.export_results(sim_results)
-            return report_path
-
+            self.session = pyfluent.launch_fluent(
+                mode=pyfluent.FluentMode.MESHING,
+                precision=pyfluent.Precision.DOUBLE,
+                processor_count=12,
+                dimension=3
+            )
+            self.tui = self.session.tui
+            return True
         except Exception as e:
-            print("PIPELINE ERROR:", e)
-            print(traceback.format_exc())
-            raise
+            self.log_info(f"ERROR launching fluent meshing: {e}")
+            return False
 
-# ===============================================================
-# FRONT WING PIPELINE WRAPPER
-# ===============================================================
+    def launch_fluent_solver(self):
+        self.log_info("Launching Fluent Solver...")
+        try:
+            self.session = pyfluent.launch_fluent(
+                mode=pyfluent.FluentMode.SOLVER,
+                precision=pyfluent.Precision.DOUBLE,
+                processor_count=12,
+                dimension=3
+            )
+            self.tui = self.session.tui
+            return True
+        except Exception as e:
+            self.log_info(f"ERROR launching fluent solver: {e}")
+            return False
 
-class FrontWingPipeline(BasePipeline):
-    def run_meshing(self):
-        return fw_run_meshing(
-            geom_path=self.geom_path,
-            outdir=self.sim_dir,
-            L=self.L, W=self.W, H=self.H
-        )
+    # ------------------------------------------------------------
+    # ABSTRACT PLACEHOLDERS (implemented in children)
+    # ------------------------------------------------------------
+    def setup_geometry(self):
+        raise NotImplementedError
 
-    def run_solver(self, mesh_path):
-        return fw_run_solver(
-            mesh_path=mesh_path,
-            outdir=self.sim_dir
-        )
+    def mesh_surface(self):
+        raise NotImplementedError
 
-    def export_results(self, results):
-        return fw_export_results(
-            results=results,
-            outdir=self.sim_dir
-        )
+    def mesh_volume(self):
+        raise NotImplementedError
 
+    def run_solver_stages(self):
+        raise NotImplementedError
 
+    def export_results(self):
+        raise NotImplementedError
 
-# ===============================================================
-# REAR WING PIPELINE WRAPPER
-# ===============================================================
+    # ------------------------------------------------------------
+    # MASTER EXECUTION PIPELINE
+    # ------------------------------------------------------------
+    def run(self):
+        """Master execution order shared by all pipelines."""
+        self.log_info("Starting CFD pipeline...")
+        self.progress(0)
 
-class RearWingPipeline(BasePipeline):
-    def run_meshing(self):
-        return rw_run_meshing(
-            geom_path=self.geom_path,
-            outdir=self.sim_dir,
-            L=self.L, W=self.W, H=self.H
-        )
+        # === 1. Meshing Phase ===
+        if not self.launch_fluent_meshing():
+            raise RuntimeError("Failed to start Fluent Meshing.")
 
-    def run_solver(self, mesh_path):
-        return rw_run_solver(
-            mesh_path=mesh_path,
-            outdir=self.sim_dir
-        )
+        self.setup_geometry()
 
-    def export_results(self, results):
-        return rw_export_results(
-            results=results,
-            outdir=self.sim_dir
-        )
+        # Surface mesh complete → stage 1
+        self.mesh_surface()
+        self.progress(1)
 
+        # Volume mesh complete → stage 2
+        self.mesh_volume()
+        self.progress(2)
 
+        # === 2. Solver Phase ===
+        if not self.launch_fluent_solver():
+            raise RuntimeError("Failed to start Fluent Solver.")
 
-# ===============================================================
-# UNDERTRAY PIPELINE WRAPPER
-# ===============================================================
+        # Ramp stages 1–3 → progress 3, 4, 5
+        self.run_solver_stages()
 
-class UndertrayPipeline(BasePipeline):
-    def run_meshing(self):
-        return ut_run_meshing(
-            geom_path=self.geom_path,
-            outdir=self.sim_dir,
-            L=self.L, W=self.W, H=self.H
-        )
+        # === 3. Reporting Phase ===
+        self.export_results()
+        self.progress(6)
 
-    def run_solver(self, mesh_path):
-        return ut_run_solver(
-            mesh_path=mesh_path,
-            outdir=self.sim_dir
-        )
-
-    def export_results(self, results):
-        return ut_export_results(
-            results=results,
-            outdir=self.sim_dir
-        )
-
-
-
-# ===============================================================
-# HALF CAR PIPELINE WRAPPER
-# ===============================================================
-
-class HalfCarPipeline(BasePipeline):
-    def run_meshing(self):
-        return hc_run_meshing(
-            geom_path=self.geom_path,
-            outdir=self.sim_dir,
-            L=self.L, W=self.W, H=self.H
-        )
-
-    def run_solver(self, mesh_path):
-        return hc_run_solver(
-            mesh_path=mesh_path,
-            outdir=self.sim_dir
-        )
-
-    def export_results(self, results):
-        return hc_export_results(
-            results=results,
-            outdir=self.sim_dir
-        )
+        self.log_info("Pipeline complete.")
+        return {"status": "success", "sim": self.sim_name}
