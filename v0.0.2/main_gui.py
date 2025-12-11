@@ -1,81 +1,82 @@
 # main_gui.py
-# Ram Racing FSAE Aero Automation Suite
-# GUI interface for running isolated and half-car CFD pipelines
+# Ram Racing FSAE Aero Automation Suite (PySide6 Version)
 
 import sys
 import os
 
-from PyQt5 import QtWidgets, QtCore
-from PyQt5.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import (
+    QWidget, QApplication, QPushButton, QLineEdit, QTextEdit, QListWidget,
+    QFormLayout, QVBoxLayout, QHBoxLayout, QFileDialog, QMessageBox
+)
 
 from simulation_manager import SimulationManager
 from pipelines import (
     FrontWingPipeline,
     RearWingPipeline,
     UndertrayPipeline,
-    HalfCarPipeline,
+    HalfCarPipeline
 )
 
 
-class MainWindow(QtWidgets.QWidget):
+class MainWindow(QWidget):
     """
-    Main application window for the CFD automation suite.
+    Main application window for the CFD automation suite (PySide6 version).
     """
 
     def __init__(self):
         super().__init__()
 
-        # --------------------------
-        # Declare all attributes here
-        # --------------------------
-        self.geom_path: QtWidgets.QLineEdit = None
-        self.out_path: QtWidgets.QLineEdit = None
-        self.sim_name: QtWidgets.QLineEdit = None
+        # ==============================================
+        # Declare attributes for PyCharm and type safety
+        # ==============================================
+        self.geom_path: QLineEdit = None
+        self.out_path: QLineEdit = None
+        self.sim_name: QLineEdit = None
 
-        self.L_field: QtWidgets.QLineEdit = None
-        self.W_field: QtWidgets.QLineEdit = None
-        self.H_field: QtWidgets.QLineEdit = None
+        self.L_field: QLineEdit = None
+        self.W_field: QLineEdit = None
+        self.H_field: QLineEdit = None
 
-        self.btn_fw: QtWidgets.QPushButton = None
-        self.btn_rw: QtWidgets.QPushButton = None
-        self.btn_ut: QtWidgets.QPushButton = None
-        self.btn_hc: QtWidgets.QPushButton = None
+        self.btn_fw: QPushButton = None
+        self.btn_rw: QPushButton = None
+        self.btn_ut: QPushButton = None
+        self.btn_hc: QPushButton = None
 
-        self.log_box: QtWidgets.QTextEdit = None
-        self.queue_list: QtWidgets.QListWidget = None
+        self.log_box: QTextEdit = None
+        self.queue_list: QListWidget = None
 
-        # Backend simulation manager
+        # Simulation backend
         self.manager = SimulationManager()
 
         # Window setup
         self.setWindowTitle("Ram Racing FSAE Aero Automation Suite")
         self.setGeometry(200, 200, 850, 600)
 
-        # Build GUI
+        # Build UI
         self.init_ui()
 
     # ============================================================
     # GUI Layout
     # ============================================================
     def init_ui(self):
-        layout = QtWidgets.QVBoxLayout()
-        form = QtWidgets.QFormLayout()
+        layout = QVBoxLayout()
+        form = QFormLayout()
 
         # --------------------------
         # Input fields
         # --------------------------
-        self.geom_path = QtWidgets.QLineEdit()
-        self.out_path = QtWidgets.QLineEdit()
-        self.sim_name = QtWidgets.QLineEdit()
+        self.geom_path = QLineEdit()
+        self.out_path = QLineEdit()
+        self.sim_name = QLineEdit()
 
-        self.L_field = QtWidgets.QLineEdit("3.1")
-        self.W_field = QtWidgets.QLineEdit("1.40462")
-        self.H_field = QtWidgets.QLineEdit("1.19507")
+        self.L_field = QLineEdit("3.1")
+        self.W_field = QLineEdit("1.40462")
+        self.H_field = QLineEdit("1.19507")
 
-        browse_geom = QtWidgets.QPushButton("Browse Geometry")
+        browse_geom = QPushButton("Browse Geometry")
         browse_geom.clicked.connect(self.browse_geometry)
 
-        browse_out = QtWidgets.QPushButton("Browse Output")
+        browse_out = QPushButton("Browse Output")
         browse_out.clicked.connect(self.browse_output)
 
         form.addRow("Geometry File:", self.geom_path)
@@ -93,12 +94,12 @@ class MainWindow(QtWidgets.QWidget):
         # --------------------------
         # Pipeline buttons
         # --------------------------
-        btn_layout = QtWidgets.QHBoxLayout()
+        btn_layout = QHBoxLayout()
 
-        self.btn_fw = QtWidgets.QPushButton("Run Front Wing")
-        self.btn_rw = QtWidgets.QPushButton("Run Rear Wing")
-        self.btn_ut = QtWidgets.QPushButton("Run Undertray")
-        self.btn_hc = QtWidgets.QPushButton("Run Half Car")
+        self.btn_fw = QPushButton("Run Front Wing")
+        self.btn_rw = QPushButton("Run Rear Wing")
+        self.btn_ut = QPushButton("Run Undertray")
+        self.btn_hc = QPushButton("Run Half Car")
 
         self.btn_fw.clicked.connect(lambda: self.add_job("fw"))
         self.btn_rw.clicked.connect(lambda: self.add_job("rw"))
@@ -115,10 +116,10 @@ class MainWindow(QtWidgets.QWidget):
         # --------------------------
         # Queue controls
         # --------------------------
-        queue_controls = QtWidgets.QHBoxLayout()
+        queue_controls = QHBoxLayout()
 
-        add_queue = QtWidgets.QPushButton("Add to Queue Only")
-        start_queue = QtWidgets.QPushButton("Start Queue")
+        add_queue = QPushButton("Add to Queue Only")
+        start_queue = QPushButton("Start Queue")
 
         add_queue.clicked.connect(self.add_to_queue_only)
         start_queue.clicked.connect(self.start_queue)
@@ -131,14 +132,14 @@ class MainWindow(QtWidgets.QWidget):
         # --------------------------
         # Log window
         # --------------------------
-        self.log_box = QtWidgets.QTextEdit()
+        self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
         layout.addWidget(self.log_box)
 
         # --------------------------
         # Queue display
         # --------------------------
-        self.queue_list = QtWidgets.QListWidget()
+        self.queue_list = QListWidget()
         layout.addWidget(self.queue_list)
 
         self.setLayout(layout)
@@ -180,6 +181,7 @@ class MainWindow(QtWidgets.QWidget):
         self.log("Queue finished.")
 
     def build_job(self, sim_type: str):
+
         geom = self.geom_path.text().strip()
         outdir = self.out_path.text().strip()
         name = self.sim_name.text().strip()
@@ -210,7 +212,7 @@ class MainWindow(QtWidgets.QWidget):
         if sim_type not in pipeline_map:
             return self.error("Unknown simulation type.")
 
-        job = {
+        return {
             "pipeline_class": pipeline_map[sim_type],
             "geom": geom,
             "outdir": os.path.join(outdir, name),
@@ -219,8 +221,6 @@ class MainWindow(QtWidgets.QWidget):
             "W": W,
             "H": H,
         }
-
-        return job
 
     # ============================================================
     # Logging utilities
@@ -241,10 +241,10 @@ class MainWindow(QtWidgets.QWidget):
 # MAIN
 # ======================================================================
 def main():
-    app = QtWidgets.QApplication(sys.argv)
+    app = QApplication(sys.argv)
     win = MainWindow()
     win.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
