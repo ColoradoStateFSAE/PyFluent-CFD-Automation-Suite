@@ -1,67 +1,60 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
-from PyInstaller.utils.hooks import collect_all
 
-# ---------------------------------------------------------
-# Get absolute path of this .spec file correctly
-# PyInstaller does NOT set __file__, so we use cwd
-# ---------------------------------------------------------
-project_dir = os.getcwd()
+# Your project root folder
+project_dir = r"C:\Users\Hayes Dodson\PycharmProjects\FluentAuto\v0.0.2"
 
-# ---------------------------------------------------------
-# Collect Pyside6 assets (Qt DLLs, plugins, etc.)
-# ---------------------------------------------------------
-pyside6_binaries, pyside6_datas, pyside6_hidden = collect_all("PySide6")
+# All your pipeline scripts located next to main_gui.py
+pipelines = [
+    "frontwing_pipeline.py",
+    "rearwing_pipeline.py",
+    "undertray_pipeline.py",
+    "halfcar_pipeline.py",
+    "pipelines.py",
+    "diagnostics.py",
+    "simulation_manager.py",
+    "report_gen.py",
+    "worker_thread.py",
+]
 
-# ---------------------------------------------------------
-# Bundle ansys.units YAML files
-# ---------------------------------------------------------
-import ansys.units
-units_path = ansys.units.__path__[0]
+datas = []
 
-datas = [
-    (units_path, "ansys/units"),
-] + pyside6_datas
+# Include all pipeline files as data so PyInstaller ALWAYS bundles them
+for f in pipelines:
+    datas.append((os.path.join(project_dir, f), "."))
 
-# ---------------------------------------------------------
-# Full hidden imports needed for Fluent + PySide6
-# ---------------------------------------------------------
+# Fix for Ansys metadata (ansys-platform-instancemanagement)
+# We do NOT bundle the Fluent runtime — Fluent must already be installed
 hiddenimports = [
-    # ansys units
-    "ansys.units",
-    "ansys.units.quantity",
-    "ansys.units.systems",
-    "ansys.units._constants",
-    "ansys.units.common",
-
-    # Fluent Core
     "ansys.fluent.core",
-    "ansys.fluent.core.session_solver_lite",
-    "ansys.fluent.core.utils.dump_session_data",
-    "ansys.fluent.core.utils.event_loop",
-    "ansys.fluent.core.utils.test_grpc_connection",
+    "ansys.fluent.core.session",
+    "ansys.fluent.core.solver",
+    "ansys.fluent.core.utils",
+    "ansys.fluent.core.launcher",
+    "ansys.platform.instancemanagement",
+    "importlib.metadata",
+]
 
-    # Visualization
-    "ansys.fluent.visualization",
-    "ansys.fluent.visualization.contour",
-    "ansys.fluent.visualization.matplotlib",
-    "ansys.fluent.visualization.pyvista",
-] + pyside6_hidden
-
+# Your main GUI entry file
+main_script = os.path.join(project_dir, "main_gui.py")
 
 block_cipher = None
 
 a = Analysis(
-    ['main_gui.py'],
+    [main_script],
     pathex=[project_dir],
-    binaries=pyside6_binaries,
+    binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
     excludes=[
-        "PyQt5",   # Avoid conflicting Qt bindings
+        "PyQt5",
         "PyQt6",
-        "qtpy"
+        "qtpy",
+        "tkinter",
     ],
     noarchive=False,
 )
@@ -71,12 +64,20 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
-    [],
+    exclude_binaries=True,
     name="Ram Racing Aero Automation Suite",
     debug=False,
+    bootloader_ignore_signals=False,
     strip=False,
-    upx=False,
+    upx=True,
     console=False,
+    icon=os.path.join(project_dir, "icon.ico") if os.path.exists(os.path.join(project_dir, "icon.ico")) else None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    name="Ram Racing Aero Automation Suite",
 )
