@@ -1,314 +1,138 @@
 # frontwing_pipeline.py
-# Ram Racing FSAE Aero Automation Suite
-# Isolated Front Wing CFD Pipeline
+# Front Wing CFD pipeline (class-based)
 
 import os
-import matplotlib.pyplot as plt
-from report_gen import generate_report
-import ansys.fluent.core as pyfluent
+from pipelines import BasePipeline
 
 
-# ================================================================
-# Helper: wait for Fluent operations
-# ================================================================
-def wait():
-    import time
-    time.sleep(0.25)
+class FrontWingPipeline(BasePipeline):
+    """
+    CFD pipeline for isolated front wing validation.
+    Inherits all Fluent handling behaviors from BasePipeline.
+    """
 
+    # =============================================================
+    # 1. GEOMETRY SETUP
+    # =============================================================
+    def setup_geometry(self):
+        self.log_info("Importing geometry for Front Wing...")
 
-# ================================================================
-# PROJECTED AREA (front wing only)
-# ================================================================
-def compute_projected_area(solver, outdir):
-    area_path = os.path.join(outdir, "projected_area.txt")
+        workflow = self.session.workflow
+        tasks = workflow.TaskObject
 
-    try:
-        solver.tui.report.surface_integrals.area("frontwing", "yes")
-        output = solver.solver.get_fluent_stdout()
-        lines = output.splitlines()
-        area_val = None
+        workflow.InitializeWorkflow(WorkflowType="Watertight Geometry")
 
-        for line in lines[::-1]:
-            if "Surface area" in line or "surface area" in line:
-                area_val = float(line.split()[-1])
-                break
+        import_geom = tasks["Import Geometry"]
+        import_geom.Arguments.set_state({
+            "FileName": self.geom_path,
+            "LengthUnit": "m"
+        })
+        import_geom.Execute()
 
-        if area_val is None:
-            area_val = 0.0
+        self.log_info("Geometry imported.")
 
-        with open(area_path, "w") as f:
-            f.write(str(area_val))
+    # =============================================================
+    # 2. SURFACE MESHING
+    # =============================================================
+    def mesh_surface(self):
+        self.log_info("Generating Front Wing surface mesh...")
 
-        return area_val
+        workflow = self.session.workflow
+        tasks = workflow.TaskObject
 
-    except:
-        with open(area_path, "w") as f:
-            f.write("0.0")
-        return 0.0
+        # Generate Surface Mesh
+        surface_mesh = tasks["Generate the Surface Mesh"]
+        surface_mesh.Arguments.set_state({
+            "CFDSurfaceMeshControls": {
+                "CurvatureNormalAngle": 12,
+                "MinSize": 0.001,
+                "MaxSize": 0.032,
+                "GrowthRate": 1.2
+            }
+        })
+        surface_mesh.Execute()
 
+        self.log_info("Surface mesh complete.")
 
-# ================================================================
-# SAVE CONTOURS
-# ================================================================
-def save_contours(solver, outdir):
-    p_path = os.path.join(outdir, "pressure.png")
-    v_path = os.path.join(outdir, "velocity.png")
+    # =============================================================
+    # 3. VOLUME MESHING
+    # =============================================================
+    def mesh_volume(self):
+        self.log_info("Generating Front Wing volume mesh...")
 
-    try:
-        solver.tui.display.set.window(1)
-        solver.tui.display.contours("pressure", "yes", "frontwing")
-        solver.tui.display.save_picture(p_path)
+        workflow = self.session.workflow
+        tasks = workflow.TaskObject
 
-        solver.tui.display.contours("velocity-magnitude", "yes", "frontwing")
-        solver.tui.display.save_picture(v_path)
+        volume_mesh = tasks["Generate the Volume Mesh"]
+        volume_mesh.Arguments.set_state({
+            "Solver": "Fluent",
+            "FillWith": "poly-hexcore",
+            "MinCellLength": 0.0005,
+            "MaxCellLength": 0.256,
+            "EnableParallel": True
+        })
+        volume_mesh.Execute()
 
-    except:
-        pass
+        self.log_info("Volume mesh complete.")
 
-    return p_path, v_path
+    # =============================================================
+    # 4. SOLVER (3-STAGE RAMP)
+    # =============================================================
+    def run_solver_stages(self):
+        tui = self.tui
 
+        self.log_info("Loading mesh into solver...")
+        tui.file.read_case(os.path.join(self.output_dir, "mesh.msh.h5"))
 
-# ================================================================
-# RESIDUAL PLOT
-# ================================================================
-def save_residual_plot(solver, outdir):
-    r_path = os.path.join(outdir, "residuals.png")
+        # Enable GEKO turbulence model
+        self.log_info("Configuring turbulence model (GEKO)...")
+        tui.define.models.viscous.gko("yes")
 
-    try:
-        res = solver.solution.monitor.get_data()
-        its = res["iterations"]
-        cont = res["continuity"]
+        # -------------------------------
+        # Stage 1 – coarse steady solve
+        # -------------------------------
+        self.log_info("Solver Ramp 1: 1000 iterations...")
+        tui.solve.iterate(1000)
+        self.progress(3)
 
-        plt.figure(figsize=(6, 4))
-        plt.semilogy(its, cont, label="Continuity")
-        plt.xlabel("Iterations")
-        plt.ylabel("Residual")
-        plt.grid(True)
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(r_path)
-        plt.close()
+        # -------------------------------
+        # Stage 2 – enable curvature correction
+        # -------------------------------
+        self.log_info("Solver Ramp 2: enabling curvature correction...")
+        tui.define.models.viscous.correction_factor("on")
 
-    except:
-        pass
+        tui.solve.iterate(1000)
+        self.progress(4)
 
-    return r_path
+        # -------------------------------
+        # Stage 3 – long stable solve
+        # -------------------------------
+        self.log_info("Solver Ramp 3: 5000 iterations...")
+        tui.solve.iterate(5000)
+        self.progress(5)
 
+        self.log_info("Solver completed for Front Wing.")
 
-# ================================================================
-# COEFFICIENT EXTRACTION (frontwing only)
-# ================================================================
-def extract_coeffs(solver, area):
-    # Force report last values
-    Cd = solver.tui.report.force_coefficients.drag("frontwing")
-    Cl = solver.tui.report.force_coefficients.lift("frontwing")
+    # =============================================================
+    # 5. EXPORT RESULTS
+    # =============================================================
+    def export_results(self):
+        self.log_info("Exporting Front Wing results...")
 
-    # SCx, SCz
-    SCx = Cd * area
-    SCz = Cl * area
+        case_file = os.path.join(self.output_dir, f"{self.sim_name}.cas.h5")
+        data_file = os.path.join(self.output_dir, f"{self.sim_name}.dat.h5")
+        coeff_file = os.path.join(self.output_dir, f"{self.sim_name}_coeffs.txt")
 
-    return Cd, Cl, SCx, SCz
+        tui = self.tui
 
+        # Save case & data
+        tui.file.write_case_data(case_file)
 
-# ================================================================
-# MESHING PIPELINE
-# ================================================================
-def run_meshing(geom_path, outdir, L, W, H):
+        # Extract force coefficients
+        with open(coeff_file, "w") as f:
+            f.write("Front Wing Coefficients\n")
+            f.write("------------------------\n")
+            f.write(str(self.session.solution.force_monitor.get_force_coefficients()))
 
-    session = pyfluent.launch_fluent(
-        mode=pyfluent.FluentMode.MESHING,
-        precision=pyfluent.Precision.DOUBLE,
-        processor_count=20,
-        dimension=3,
-        mpi_type="intel"
-    )
+        self.log_info("Result files saved.")
 
-    wf = session.workflow
-    tasks = wf.TaskObject
-
-    # ------------------------------------------------------------
-    # Import geometry
-    # ------------------------------------------------------------
-    imp = tasks["Import Geometry"]
-    imp.Arguments.set_state({"FileName": geom_path, "LengthUnit": "m"})
-    imp.Execute()
-    wait()
-
-    # ------------------------------------------------------------
-    # Curvature sizing for wing
-    # ------------------------------------------------------------
-    add_ls = tasks["Add Local Sizing"]
-    add_ls.AddChildToTask()
-    ls = tasks["curvature_fw"]
-    ls.Arguments.set_state({
-        "LocalSizingType": "Curvature",
-        "SizeControlType": "Curvature",
-        "MinSize": 0.0005,
-        "MaxSize": 0.008,
-        "CurvatureNormalAngle": 9,
-        "BoundaryNameList": ["frontwing"]
-    })
-    ls.Execute()
-    wait()
-
-    # ------------------------------------------------------------
-    # Surface mesh
-    # ------------------------------------------------------------
-    surf = tasks["Generate the Surface Mesh"]
-    surf.Arguments.set_state({
-        "MinimumSize": 0.002,
-        "MaximumSize": 0.256,
-        "GrowthRate": 1.19999,
-        "CurvatureNormalAngle": 18,
-        "CellsPerGap": 1,
-        "SizeFunctions": "CurvatureProximity"
-    })
-    surf.Execute()
-    wait()
-
-    # Improve surface mesh
-    imp_surf = tasks["Improve Surface Mesh"]
-    imp_surf.Arguments.set_state({"FaceQualityLimit": 0.7})
-    imp_surf.Execute()
-    wait()
-
-    # Describe geometry
-    desc = tasks["Describe Geometry"]
-    desc.Arguments.set_state({"SetupType": "The geometry consists of only fluid regions with no voids"})
-    desc.Execute()
-    wait()
-
-    tasks["Update Boundaries"].Execute()
-    wait()
-    tasks["Update Regions"].Execute()
-    wait()
-
-    # ------------------------------------------------------------
-    # Boundary layers
-    # ------------------------------------------------------------
-    bl = tasks["Add Boundary Layers"]
-    bl.AddChildToTask()
-    bl_task = tasks["last-ratio_1"]
-
-    bl_task.Arguments.set_state({
-        "BoundaryZones": ["frontwing"],
-        "FirstLayerHeight": 0.0005,
-        "NumberOfLayers": 10,
-        "LastLayerRatio": 1.2
-    })
-    bl_task.Execute()
-    wait()
-
-    # ------------------------------------------------------------
-    # Volume mesh (Hexcore)
-    # ------------------------------------------------------------
-    vol = tasks["Generate the Volume Mesh"]
-    vol.Arguments.set_state({
-        "FillWith": "poly-hexcore",
-        "MinCellLength": 0.0005,
-        "MaxCellLength": 0.256,
-        "PeelLayers": 1,
-        "EnableParallel": True
-    })
-    vol.Execute()
-    wait()
-
-    # Improve volume mesh
-    imv = tasks["Improve Volume Mesh"]
-    imv.Arguments.set_state({"QualityMethod": "Orthogonal", "CellQualityLimit": 0.2})
-    imv.Execute()
-    wait()
-
-    # Save mesh
-    mesh_path = os.path.join(outdir, "frontwing_mesh.msh.h5")
-    session.meshing.SaveMesh(file_name=mesh_path)
-
-    return mesh_path
-
-
-# ================================================================
-# SOLVER PIPELINE
-# ================================================================
-def run_solver(mesh_path, outdir):
-
-    solver = pyfluent.launch_fluent(
-        mode=pyfluent.FluentMode.SOLVER,
-        precision=pyfluent.Precision.DOUBLE,
-        processor_count=20,
-        dimension=3,
-        mpi_type="intel"
-    )
-
-    # Load mesh
-    solver.solver.File.Read(file_type="mesh", file_name=mesh_path)
-    wait()
-
-    # Units
-    solver.tui.define.units("velocity", "mph")
-    solver.tui.define.units("force", "lbf")
-
-    # GEKO model
-    solver.tui.define.models.viscous.ke_gko("yes")
-    solver.tui.define.models.viscous.ke_gko.options.production_limiter("yes")
-    solver.tui.define.models.viscous.ke_gko.options.curvature_correction("no")
-
-    # Inlet 40 mph
-    solver.tui.define.boundary_conditions.velocity_inlet("inlet", "yes",
-        "velocity-magnitude", "40")
-
-    # Moving ground
-    solver.tui.define.boundary_conditions.wall("ground", "yes",
-        "motion", "moving-wall",
-        "moving-wall-speed", "40",
-        "moving-wall-direction", "1", "0", "0")
-
-    solver.tui.solve.reference_values.set("compute-from", "inlet")
-
-    # ------------------------------------------------------------
-    # RAMP
-    # ------------------------------------------------------------
-    solver.solution.RunCalculation.iterate(1000)
-    wait()
-
-    solver.solution.RunCalculation.iterate(1000)
-    wait()
-
-    solver.tui.define.models.viscous.ke_gko.options.curvature_correction("yes")
-    solver.solution.RunCalculation.iterate(5000)
-    wait()
-
-    # ------------------------------------------------------------
-    # Extract data
-    # ------------------------------------------------------------
-    area = compute_projected_area(solver, outdir)
-    Cd, Cl, SCx, SCz = extract_coeffs(solver, area)
-
-    p_img, v_img = save_contours(solver, outdir)
-    r_img = save_residual_plot(solver, outdir)
-
-    # Save case + data
-    solver.solver.File.WriteCaseData(
-        file_name=os.path.join(outdir, "final_frontwing")
-    )
-
-    return {
-        "component": "Front Wing",
-        "geom": mesh_path,
-        "mesh_file": mesh_path,
-        "dimensions": {},
-        "coeffs": {
-            "Cd": Cd, "Cl": Cl, "SCx": SCx, "SCz": SCz
-        },
-        "contours": {
-            "pressure": p_img,
-            "velocity": v_img,
-            "residuals": r_img
-        }
-    }
-
-
-# ================================================================
-# EXPORT RESULTS → PDF
-# ================================================================
-def export_results(results, outdir):
-    return generate_report(results, outdir)
