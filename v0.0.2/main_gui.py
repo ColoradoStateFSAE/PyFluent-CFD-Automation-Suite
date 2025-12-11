@@ -1,82 +1,54 @@
 # main_gui.py
-# Ram Racing FSAE Aero Automation Suite (PySide6)
-# Fully threaded GUI with progress bar, theme toggle, and diagnostics
+# Ram Racing FSAE Aero Automation Suite
+# GUI interface rewritten for PySide6
 
 import sys
 import os
 
-from PySide6.QtWidgets import (
-    QApplication, QWidget, QPushButton, QLabel, QLineEdit, QTextEdit,
-    QListWidget, QFormLayout, QVBoxLayout, QHBoxLayout, QFileDialog,
-    QMessageBox, QProgressBar, QComboBox
-)
-from PySide6.QtCore import Qt
+from PySide6 import QtWidgets, QtCore
+from PySide6.QtWidgets import QFileDialog, QMessageBox
 
-from worker_thread import SimulationWorker
 from simulation_manager import SimulationManager
-from diagnostics import FluentDiagnostics
-
 from frontwing_pipeline import FrontWingPipeline
 from rearwing_pipeline import RearWingPipeline
 from undertray_pipeline import UndertrayPipeline
 from halfcar_pipeline import HalfCarPipeline
 
-# Theme files (inline for simplicity)
-LIGHT_STYLESHEET = """
-QWidget { background-color: #ffffff; color: #000000; }
-QLineEdit, QTextEdit, QListWidget { background-color: #f0f0f0; }
-QPushButton { background-color: #e0e0e0; padding: 4px; }
-"""
 
-DARK_STYLESHEET = """
-QWidget { background-color: #202020; color: #e0e0e0; }
-QLineEdit, QTextEdit, QListWidget { background-color: #303030; color: #ffffff; }
-QPushButton { background-color: #404040; color: #ffffff; padding: 4px; }
-"""
+class MainWindow(QtWidgets.QWidget):
 
-
-# ===================================================================
-# MAIN GUI
-# ===================================================================
-class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.manager = SimulationManager()
-        self.current_worker = None
-
         self.setWindowTitle("Ram Racing FSAE Aero Automation Suite")
-        self.setGeometry(200, 200, 900, 680)
+        self.setGeometry(200, 200, 850, 600)
 
-        # Build UI
+        self.manager = SimulationManager()
         self.init_ui()
 
-        # Run Fluent diagnostics on startup
-        self.run_diagnostics(show_popup=False)
-
-    # ===========================================================
-    # UI LAYOUT
-    # ===========================================================
+    # ============================================================
+    # GUI Layout
+    # ============================================================
     def init_ui(self):
-        layout = QVBoxLayout()
+        layout = QtWidgets.QVBoxLayout()
 
-        # -------------------------------------------------------
-        # INPUT FIELDS
-        # -------------------------------------------------------
-        form = QFormLayout()
+        # --------------------------
+        # SECTION: Input fields
+        # --------------------------
+        form = QtWidgets.QFormLayout()
 
-        self.geom_path = QLineEdit()
-        self.out_path = QLineEdit()
-        self.sim_name = QLineEdit()
+        self.geom_path = QtWidgets.QLineEdit()
+        self.out_path = QtWidgets.QLineEdit()
+        self.sim_name = QtWidgets.QLineEdit()
 
-        self.L_field = QLineEdit("3.1")
-        self.W_field = QLineEdit("1.40462")
-        self.H_field = QLineEdit("1.19507")
+        self.L_field = QtWidgets.QLineEdit("3.1")
+        self.W_field = QtWidgets.QLineEdit("1.40462")
+        self.H_field = QtWidgets.QLineEdit("1.19507")
 
-        browse_geom = QPushButton("Browse Geometry")
+        browse_geom = QtWidgets.QPushButton("Browse Geometry")
         browse_geom.clicked.connect(self.browse_geometry)
 
-        browse_out = QPushButton("Browse Output Folder")
+        browse_out = QtWidgets.QPushButton("Browse Output")
         browse_out.clicked.connect(self.browse_output)
 
         form.addRow("Geometry File:", self.geom_path)
@@ -91,199 +63,131 @@ class MainWindow(QWidget):
 
         layout.addLayout(form)
 
-        # -------------------------------------------------------
-        # THEME TOGGLE
-        # -------------------------------------------------------
-        theme_layout = QHBoxLayout()
-        theme_label = QLabel("Theme:")
-        self.theme_box = QComboBox()
-        self.theme_box.addItems(["Light", "Dark"])
-        self.theme_box.currentIndexChanged.connect(self.apply_theme)
-        theme_layout.addWidget(theme_label)
-        theme_layout.addWidget(self.theme_box)
-        layout.addLayout(theme_layout)
+        # --------------------------
+        # SECTION: Pipeline Buttons
+        # --------------------------
+        btn_layout = QtWidgets.QHBoxLayout()
 
-        # -------------------------------------------------------
-        # PIPELINE BUTTONS
-        # -------------------------------------------------------
-        pipe_layout = QHBoxLayout()
+        self.btn_fw = QtWidgets.QPushButton("Run Front Wing")
+        self.btn_rw = QtWidgets.QPushButton("Run Rear Wing")
+        self.btn_ut = QtWidgets.QPushButton("Run Undertray")
+        self.btn_hc = QtWidgets.QPushButton("Run Half Car")
 
-        btn_fw = QPushButton("Run Front Wing")
-        btn_rw = QPushButton("Run Rear Wing")
-        btn_ut = QPushButton("Run Undertray")
-        btn_hc = QPushButton("Run Half-Car")
+        self.btn_fw.clicked.connect(lambda: self.add_job("fw"))
+        self.btn_rw.clicked.connect(lambda: self.add_job("rw"))
+        self.btn_ut.clicked.connect(lambda: self.add_job("ut"))
+        self.btn_hc.clicked.connect(lambda: self.add_job("hc"))
 
-        btn_fw.clicked.connect(lambda: self.queue_job("fw"))
-        btn_rw.clicked.connect(lambda: self.queue_job("rw"))
-        btn_ut.clicked.connect(lambda: self.queue_job("ut"))
-        btn_hc.clicked.connect(lambda: self.queue_job("hc"))
+        btn_layout.addWidget(self.btn_fw)
+        btn_layout.addWidget(self.btn_rw)
+        btn_layout.addWidget(self.btn_ut)
+        btn_layout.addWidget(self.btn_hc)
 
-        pipe_layout.addWidget(btn_fw)
-        pipe_layout.addWidget(btn_rw)
-        pipe_layout.addWidget(btn_ut)
-        pipe_layout.addWidget(btn_hc)
+        layout.addLayout(btn_layout)
 
-        layout.addLayout(pipe_layout)
+        # --------------------------
+        # SECTION: Queue Controls
+        # --------------------------
+        queue_controls = QtWidgets.QHBoxLayout()
 
-        # -------------------------------------------------------
-        # QUEUE + CONTROLS
-        # -------------------------------------------------------
-        queue_ctrl = QHBoxLayout()
+        add_queue = QtWidgets.QPushButton("Add to Queue Only")
+        start_queue = QtWidgets.QPushButton("Start Queue")
 
-        btn_add = QPushButton("Add to Queue Only")
-        btn_start = QPushButton("Start Queue")
-        btn_diag = QPushButton("Run Diagnostics")
+        add_queue.clicked.connect(self.add_to_queue_only)
+        start_queue.clicked.connect(self.start_queue)
 
-        btn_add.clicked.connect(self.add_to_queue_only)
-        btn_start.clicked.connect(self.start_queue)
-        btn_diag.clicked.connect(self.run_diagnostics)
+        queue_controls.addWidget(add_queue)
+        queue_controls.addWidget(start_queue)
 
-        queue_ctrl.addWidget(btn_add)
-        queue_ctrl.addWidget(btn_start)
-        queue_ctrl.addWidget(btn_diag)
+        layout.addLayout(queue_controls)
 
-        layout.addLayout(queue_ctrl)
-
-        # -------------------------------------------------------
-        # LOG WINDOW
-        # -------------------------------------------------------
-        self.log_box = QTextEdit()
+        # --------------------------
+        # SECTION: Log Window
+        # --------------------------
+        self.log_box = QtWidgets.QTextEdit()
         self.log_box.setReadOnly(True)
         layout.addWidget(self.log_box)
 
-        # -------------------------------------------------------
-        # QUEUE LIST
-        # -------------------------------------------------------
-        self.queue_list = QListWidget()
+        # --------------------------
+        # SECTION: Queue Display
+        # --------------------------
+        self.queue_list = QtWidgets.QListWidget()
         layout.addWidget(self.queue_list)
-
-        # -------------------------------------------------------
-        # PROGRESS BAR + LABEL
-        # -------------------------------------------------------
-        self.progress_label = QLabel("Idle")
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-
-        layout.addWidget(self.progress_label)
-        layout.addWidget(self.progress_bar)
 
         self.setLayout(layout)
 
-        # Default to dark theme (recommended for engineering apps)
-        self.apply_theme()
-
-    # ===========================================================
-    # FILE BROWSING
-    # ===========================================================
+    # ============================================================
+    # Handlers
+    # ============================================================
     def browse_geometry(self):
-        file, _ = QFileDialog.getOpenFileName(
-            self, "Select Geometry File", "", "CAD Files (*.stp *.step *.igs *.iges)"
+        fname, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Geometry File",
+            "",
+            "CAD Files (*.stp *.step *.igs *.iges)"
         )
-        if file:
-            self.geom_path.setText(file)
+        if fname:
+            self.geom_path.setText(fname)
 
     def browse_output(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Output Folder")
         if folder:
             self.out_path.setText(folder)
 
-    # ===========================================================
-    # QUEUE HANDLING
-    # ===========================================================
-    def queue_job(self, pipeline_type):
-        job = self.build_job(pipeline_type)
+    def add_job(self, pipeline_name):
+        job = self.build_job(pipeline_name)
         if job:
             self.manager.add_job(job)
-            self.queue_list.addItem(f"{job['sim_name']} ({pipeline_type.upper()})")
-            self.log(f"Queued: {job['sim_name']}")
+            self.queue_list.addItem(f"Queued: {job['sim_name']} ({pipeline_name.upper()})")
 
     def add_to_queue_only(self):
-        QMessageBox.information(self, "Queue", "Job added to queue.")
+        QMessageBox.information(self, "Queue", "Simulation added to queue. Press 'Start Queue' to run.")
 
     def start_queue(self):
-        if not self.manager.jobs:
-            self.error("No jobs in queue.")
-            return
+        self.log("Starting simulation queue...")
+        self.manager.set_log_callback(self.log)
+        self.manager.run_all()
+        self.log("Queue finished.")
 
-        self.start_next_job()
-
-    def start_next_job(self):
-        """Runs the next CFD job using QThread."""
-        if not self.manager.jobs:
-            self.log("All queued jobs completed.")
-            self.progress_label.setText("Complete")
-            self.progress_bar.setValue(100)
-            return
-
-        job = self.manager.jobs.pop(0)
-
-        self.log(f"Starting job: {job['sim_name']}")
-        self.progress_label.setText("Starting...")
-        self.progress_bar.setValue(0)
-
-        self.current_worker = SimulationWorker(job, self.manager)
-        self.current_worker.log_signal.connect(self.log)
-        self.current_worker.progress_signal.connect(self.update_progress)
-        self.current_worker.finished_signal.connect(self.job_finished)
-        self.current_worker.error_signal.connect(self.error)
-
-        self.current_worker.start()
-
-    def job_finished(self, result):
-        sim = result["sim_name"]
-        self.log(f"Job complete: {sim}")
-        self.start_next_job()
-
-    # ===========================================================
-    # PROGRESS HANDLING
-    # ===========================================================
-    def update_progress(self, stage):
-        stage_map = {
-            0: ("Starting...", 0),
-            1: ("Surface Mesh Complete", 15),
-            2: ("Volume Mesh Complete", 35),
-            3: ("Solver Ramp 1", 55),
-            4: ("Solver Ramp 2 (Curvature ON)", 75),
-            5: ("Solver Ramp 3", 90),
-            6: ("Report Generation Complete", 100),
-        }
-
-        label, pct = stage_map.get(stage, ("Unknown", 0))
-
-        self.progress_label.setText(label)
-        self.progress_bar.setValue(pct)
-
-    # ===========================================================
-    # JOB CREATION
-    # ===========================================================
-    def build_job(self, ptype):
+    def build_job(self, sim_type):
         geom = self.geom_path.text().strip()
         outdir = self.out_path.text().strip()
         name = self.sim_name.text().strip()
 
         if not geom or not os.path.exists(geom):
-            return self.error("Invalid geometry file.")
+            self.error("Geometry file invalid.")
+            return None
+
         if not outdir or not os.path.exists(outdir):
-            return self.error("Invalid output folder.")
+            self.error("Output folder invalid.")
+            return None
+
         if not name:
-            return self.error("Simulation name required.")
+            self.error("Simulation name required.")
+            return None
 
-        L = float(self.L_field.text())
-        W = float(self.W_field.text())
-        H = float(self.H_field.text())
+        try:
+            L = float(self.L_field.text())
+            W = float(self.W_field.text())
+            H = float(self.H_field.text())
+        except:
+            self.error("L, W, H must be numeric.")
+            return None
 
-        pipe_map = {
-            "fw": FrontWingPipeline,
-            "rw": RearWingPipeline,
-            "ut": UndertrayPipeline,
-            "hc": HalfCarPipeline,
-        }
-
-        if ptype not in pipe_map:
-            return self.error(f"Unknown pipeline type {ptype}")
+        if sim_type == "fw":
+            pipeline_class = FrontWingPipeline
+        elif sim_type == "rw":
+            pipeline_class = RearWingPipeline
+        elif sim_type == "ut":
+            pipeline_class = UndertrayPipeline
+        elif sim_type == "hc":
+            pipeline_class = HalfCarPipeline
+        else:
+            self.error("Unknown pipeline type.")
+            return None
 
         return {
-            "pipeline_class": pipe_map[ptype],
+            "pipeline_class": pipeline_class,
             "geom": geom,
             "outdir": os.path.join(outdir, name),
             "sim_name": name,
@@ -292,53 +196,20 @@ class MainWindow(QWidget):
             "H": H
         }
 
-    # ===========================================================
-    # THEME SYSTEM
-    # ===========================================================
-    def apply_theme(self):
-        theme = self.theme_box.currentText()
-        if theme == "Light":
-            self.setStyleSheet(LIGHT_STYLESHEET)
-        else:
-            self.setStyleSheet(DARK_STYLESHEET)
-
-    # ===========================================================
-    # DIAGNOSTICS
-    # ===========================================================
-    def run_diagnostics(self, show_popup=True):
-        diag = FluentDiagnostics(logfn=self.log)
-        results = diag.run_all()
-
-        if show_popup:
-            if results["fluent_launch"]:
-                QMessageBox.information(self, "Diagnostics", "Fluent environment OK.")
-            else:
-                QMessageBox.warning(
-                    self, "Diagnostics",
-                    "Warning: Fluent cannot be launched.\nCheck installation."
-                )
-
-    # ===========================================================
-    # LOGGING
-    # ===========================================================
     def log(self, msg):
         self.log_box.append(msg)
-        self.log_box.verticalScrollBar().setValue(self.log_box.verticalScrollBar().maximum())
 
     def error(self, msg):
         QMessageBox.critical(self, "Error", msg)
         self.log(f"ERROR: {msg}")
-        return None
 
 
-# ===================================================================
-# MAIN ENTRY
-# ===================================================================
 def main():
-    app = QApplication(sys.argv)
+    app = QtWidgets.QApplication(sys.argv)
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
+    # NOTE: PySide6 uses exec(), NOT exec_()
 
 
 if __name__ == "__main__":
